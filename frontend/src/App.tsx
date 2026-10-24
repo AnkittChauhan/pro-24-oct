@@ -1,7 +1,13 @@
 import { useState, useEffect } from 'react';
 import { Header } from './components/Header';
-import { getHealth } from './services/api';
-import { Calendar, Sliders, ShieldCheck, Database } from 'lucide-react';
+import { DateControls } from './components/DateControls';
+import { MetricsCards } from './components/MetricsCards';
+import { ForecastChart } from './components/ForecastChart';
+import { SettlementTable } from './components/SettlementTable';
+import { MonthlySummaryModal } from './components/MonthlySummaryModal';
+import { getHealth, getDayAheadData, getDates, getMonthlySummary } from './services/api';
+import { DayAheadResponse, MonthlySummaryResponse } from './types';
+import { BarChart3, AlertCircle } from 'lucide-react';
 
 export function App() {
   const [isLive, setIsLive] = useState(false);
@@ -9,12 +15,27 @@ export function App() {
   const [cacheStats, setCacheStats] = useState<{ actuals: number; forecasts: number }>({ actuals: 0, forecasts: 0 });
   const [selectedDate, setSelectedDate] = useState('2026-01-15');
   const [cutoffTime, setCutoffTime] = useState('12:00');
+  const [availableCutoffs, setAvailableCutoffs] = useState<string[]>(['09:00', '11:00', '12:00', '16:00']);
+
+  // Data states
+  const [dayAheadData, setDayAheadData] = useState<DayAheadResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Monthly summary modal state
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [monthlySummary, setMonthlySummary] = useState<MonthlySummaryResponse | null>(null);
+  const [isLoadingMonthly, setIsLoadingMonthly] = useState(false);
 
   useEffect(() => {
-    checkBackendHealth();
+    checkHealthAndInit();
   }, []);
 
-  const checkBackendHealth = async () => {
+  useEffect(() => {
+    fetchDayAheadEvaluation(selectedDate, cutoffTime);
+  }, [selectedDate, cutoffTime]);
+
+  const checkHealthAndInit = async () => {
     try {
       const health = await getHealth();
       setIsLive(health.status === 'healthy');
@@ -24,104 +45,125 @@ export function App() {
           forecasts: health.cache_stats.total_forecasts_cached,
         });
       }
+
+      const datesRes = await getDates();
+      if (datesRes.availableCutoffs) {
+        setAvailableCutoffs(datesRes.availableCutoffs);
+      }
     } catch {
       setIsLive(false);
     }
   };
 
+  const fetchDayAheadEvaluation = async (date: string, cutoff: string, force: boolean = false) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await getDayAheadData(date, cutoff, force);
+      setDayAheadData(data);
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || err.message || 'Failed to load day-ahead data.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSync = async () => {
     setIsSyncing(true);
-    await checkBackendHealth();
-    setTimeout(() => setIsSyncing(false), 800);
+    await checkHealthAndInit();
+    await fetchDayAheadEvaluation(selectedDate, cutoffTime, true);
+    setIsSyncing(false);
+  };
+
+  const handleOpenMonthlyReport = async () => {
+    setIsModalOpen(true);
+    setIsLoadingMonthly(true);
+    try {
+      const summary = await getMonthlySummary(cutoffTime);
+      setMonthlySummary(summary);
+    } catch (err) {
+      console.error('Failed to load monthly summary', err);
+    } finally {
+      setIsLoadingMonthly(false);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col text-slate-100">
-      <Header onSync={handleSync} isSyncing={isSyncing} isLive={isLive} cachedCount={cacheStats} />
+    <div className="min-h-screen bg-slate-950 flex flex-col text-slate-100 font-sans selection:bg-emerald-500/20 selection:text-emerald-300">
+      <Header
+        onSync={handleSync}
+        isSyncing={isSyncing}
+        isLive={isLive}
+        cachedCount={cacheStats}
+      />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
-        <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b border-slate-800">
-            <div>
-              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                <Sliders className="w-5 h-5 text-emerald-400" />
-                Day-Ahead Auction Decision Parameters
-              </h2>
-              <p className="text-xs text-slate-400 mt-1">
-                Configure target delivery date and gate-closure cutoff time for January 2026 procurement.
-              </p>
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+        {/* Error Banner */}
+        {error && (
+          <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-between gap-3 text-rose-300 text-xs">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{error}</span>
             </div>
+            <button
+              onClick={() => fetchDayAheadEvaluation(selectedDate, cutoffTime, false)}
+              className="px-3 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 font-medium cursor-pointer transition-all"
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
-            <div className="flex flex-wrap items-center gap-4">
-              <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-2 rounded-xl border border-slate-700/60 text-xs">
-                <Calendar className="w-4 h-4 text-emerald-400" />
-                <span className="text-slate-400">Target Delivery:</span>
-                <input
-                  type="date"
-                  min="2026-01-01"
-                  max="2026-01-31"
-                  value={selectedDate}
-                  onChange={(e) => setSelectedDate(e.target.value)}
-                  className="bg-transparent font-medium text-white focus:outline-none cursor-pointer"
-                />
-              </div>
+        {/* 1. Decision Controls Bar */}
+        <DateControls
+          selectedDate={selectedDate}
+          onDateChange={setSelectedDate}
+          cutoffTime={cutoffTime}
+          onCutoffChange={setCutoffTime}
+          availableCutoffs={availableCutoffs}
+          isCached={dayAheadData?.cached}
+        />
 
-              <div className="flex items-center gap-2 bg-slate-800/80 px-3 py-2 rounded-xl border border-slate-700/60 text-xs">
-                <span className="text-slate-400">D-1 Cutoff:</span>
-                <select
-                  value={cutoffTime}
-                  onChange={(e) => setCutoffTime(e.target.value)}
-                  className="bg-transparent font-medium text-emerald-400 focus:outline-none cursor-pointer"
-                >
-                  <option value="09:00" className="bg-slate-900 text-white">09:00 UTC (Early Run)</option>
-                  <option value="11:00" className="bg-slate-900 text-white">11:00 UTC (NordPool Cutoff)</option>
-                  <option value="12:00" className="bg-slate-900 text-white">12:00 UTC (EPEX SPOT Auction)</option>
-                  <option value="16:00" className="bg-slate-900 text-white">16:00 UTC (Late Revision)</option>
-                </select>
-              </div>
-            </div>
+        {/* Action bar for Monthly Evaluation */}
+        <div className="flex items-center justify-between text-xs px-2">
+          <div className="flex items-center gap-2 text-slate-400 font-mono">
+            <span>Evaluating Target:</span>
+            <span className="font-bold text-emerald-400">{selectedDate}</span>
+            <span>• Cutoff:</span>
+            <span className="font-bold text-amber-400">{cutoffTime} UTC</span>
           </div>
 
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="flex items-center justify-between p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
-              <div className="flex items-center gap-3">
-                <ShieldCheck className="w-6 h-6 text-emerald-400" />
-                <div>
-                  <p className="text-sm font-semibold text-emerald-300">
-                    Phase 2 Client & Cache Ingestion Ready
-                  </p>
-                  <p className="text-xs text-slate-400">
-                    ElexonClient + SQLite Read-Through Cache active with WAL mode.
-                  </p>
-                </div>
-              </div>
-              <span className="text-xs font-mono px-2.5 py-1 rounded bg-slate-800 text-emerald-300 border border-slate-700">
-                Phase 2 Complete
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between p-4 rounded-xl bg-blue-500/5 border border-blue-500/20">
-              <div className="flex items-center gap-3">
-                <Database className="w-6 h-6 text-blue-400" />
-                <div>
-                  <p className="text-sm font-semibold text-blue-300">
-                    Local Storage Status
-                  </p>
-                  <p className="text-xs text-slate-400 font-mono">
-                    {cacheStats.actuals} actuals | {cacheStats.forecasts} forecasts
-                  </p>
-                </div>
-              </div>
-              <span className="text-xs font-mono px-2.5 py-1 rounded bg-slate-800 text-blue-300 border border-slate-700">
-                SQLite WAL
-              </span>
-            </div>
-          </div>
+          <button
+            onClick={handleOpenMonthlyReport}
+            className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 text-blue-400 hover:text-blue-300 font-medium transition-all cursor-pointer shadow-sm"
+          >
+            <BarChart3 className="w-3.5 h-3.5" />
+            <span>January 2026 Monthly Benchmark Report</span>
+          </button>
         </div>
+
+        {/* 2. Executive KPI Summary Cards */}
+        <MetricsCards metrics={dayAheadData?.metrics || null} isLoading={isLoading} />
+
+        {/* 3. Interactive Dual-Axis Recharts Visualization */}
+        <ForecastChart series={dayAheadData?.series || []} isLoading={isLoading} />
+
+        {/* 4. Granular 48 Settlement Periods Audit Table */}
+        <SettlementTable series={dayAheadData?.series || []} deliveryDate={selectedDate} />
       </main>
 
-      <footer className="border-t border-slate-800/80 py-4 text-center text-xs text-slate-500">
-        UK Energy Utility Pilot • Day-Ahead Renewable Procurement System • January 2026 Elexon Dataset
+      {/* Monthly Summary Modal */}
+      <MonthlySummaryModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        summary={monthlySummary}
+        cutoffTime={cutoffTime}
+        isLoading={isLoadingMonthly}
+      />
+
+      <footer className="border-t border-slate-800/80 py-4 px-6 text-center text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between max-w-7xl mx-auto w-full">
+        <span>UK Energy Utility Trading Platform • Day-Ahead Wind Forecast Evaluation Desk</span>
+        <span className="font-mono text-slate-600 mt-1 sm:mt-0">Elexon BMRS FUELHH & WINDFOR Stream</span>
       </footer>
     </div>
   );

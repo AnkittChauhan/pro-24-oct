@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { DayAheadResponse, SystemHealth } from '../types';
+import { DayAheadResponse, SystemHealth, DatesResponse, MonthlySummaryResponse } from '../types';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '',
@@ -8,6 +8,11 @@ const api = axios.create({
 
 export const getHealth = async (): Promise<SystemHealth> => {
   const response = await api.get<SystemHealth>('/api/v1/health');
+  return response.data;
+};
+
+export const getDates = async (): Promise<DatesResponse> => {
+  const response = await api.get<DatesResponse>('/api/v1/dates');
   return response.data;
 };
 
@@ -22,6 +27,13 @@ export const getDayAheadData = async (
       cutoff_time: cutoff,
       force_refresh: forceRefresh,
     },
+  });
+  return response.data;
+};
+
+export const getMonthlySummary = async (cutoff: string = '12:00'): Promise<MonthlySummaryResponse> => {
+  const response = await api.get<MonthlySummaryResponse>('/api/v1/monthly-summary', {
+    params: { cutoff_time: cutoff },
   });
   return response.data;
 };
