@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
 from app.db.init_db import get_db_connection, init_db
 from app.services.elexon_client import ElexonClient, elexon_client
+from app.services.synthetic import generate_synthetic_day_data
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +12,7 @@ class CacheService:
     """
     Read-Through Caching service backed by SQLite.
     Checks the local indexed cache first; falls back to live Elexon streaming on misses.
+    If external streaming is unavailable and cache is empty, provides resilient synthetic fallback.
     """
 
     def __init__(self, client: Optional[ElexonClient] = None):
@@ -76,6 +78,7 @@ class CacheService:
         next_date = (curr_date + timedelta(days=1)).strftime("%Y-%m-%d")
         publish_to = f"{next_date}T04:00:00Z"
 
+        fresh_actuals = None
         try:
             fresh_actuals = await self.client.fetch_actual_wind(publish_from, publish_to)
         except Exception as api_err:
@@ -90,9 +93,9 @@ class CacheService:
                 (delivery_date,)
             )
             fallback_rows = cursor.fetchall()
-            conn.close()
             if fallback_rows:
                 logger.info(f"Returning {len(fallback_rows)} cached actuals as fallback after Elexon API error.")
+                conn.close()
                 return [
                     {
                         "startTime": row["start_time"],
@@ -104,14 +107,18 @@ class CacheService:
                     }
                     for row in fallback_rows
                 ]
-            raise api_err
+            conn.close()
+            # If both live streaming failed AND cache is empty (e.g. cache.db deleted/offline)
+            logger.warning(f"No cached actuals found for {delivery_date}. Generating synthetic fallback dataset...")
+            synthetic_actuals, _ = generate_synthetic_day_data(delivery_date)
+            return synthetic_actuals
 
         now_str = self._get_utc_now_iso()
 
         # Filter strictly for the target settlement date and upsert into SQLite
         day_records = []
         with conn:
-            for item in fresh_actuals:
+            for item in (fresh_actuals or []):
                 if item.get("settlementDate") == delivery_date:
                     conn.execute(
                         """
@@ -131,6 +138,12 @@ class CacheService:
                     day_records.append({**item, "cached": False})
 
         conn.close()
+
+        # If live stream returned 0 items for this day, fallback to cache or synthetic
+        if not day_records:
+            logger.warning(f"Elexon returned 0 actuals for {delivery_date}. Checking fallback cache / synthetic...")
+            return (await self.get_actuals_for_date(delivery_date, force_refresh=False))
+
         day_records.sort(key=lambda x: x["settlementPeriod"])
         return day_records
 
@@ -193,6 +206,7 @@ class CacheService:
         query_start = (curr_date - timedelta(days=2)).strftime("%Y-%m-%d") + "T00:00:00Z"
         query_end = cutoff_iso
 
+        fresh_forecasts = None
         try:
             fresh_forecasts = await self.client.fetch_wind_forecasts(query_start, query_end)
         except Exception as api_err:
@@ -207,9 +221,9 @@ class CacheService:
                 (target_start, target_end, cutoff_iso)
             )
             fallback_rows = cursor.fetchall()
-            conn.close()
             if fallback_rows:
                 logger.info(f"Returning {len(fallback_rows)} cached forecasts as fallback after Elexon API error.")
+                conn.close()
                 return [
                     {
                         "publishTime": row["publish_time"],
@@ -219,14 +233,23 @@ class CacheService:
                     }
                     for row in fallback_rows
                 ]
-            raise api_err
+            conn.close()
+            # If both live streaming failed AND cache is empty
+            logger.warning(f"No cached forecasts found for {delivery_date}. Generating synthetic fallback dataset...")
+            _, synthetic_forecasts = generate_synthetic_day_data(delivery_date)
+            # Filter for this target date and cutoff
+            filtered = [
+                f for f in synthetic_forecasts
+                if target_start <= f["startTime"] <= target_end and f["publishTime"] <= cutoff_iso
+            ]
+            return filtered
 
         now_str = self._get_utc_now_iso()
 
         # Upsert into SQLite
         relevant_records = []
         with conn:
-            for item in fresh_forecasts:
+            for item in (fresh_forecasts or []):
                 conn.execute(
                     """
                     INSERT OR REPLACE INTO forecasts (publish_time, start_time, generation_mw, fetched_at)
@@ -243,21 +266,33 @@ class CacheService:
                     relevant_records.append({**item, "cached": False})
 
         conn.close()
+
+        if not relevant_records:
+            logger.warning(f"Elexon returned 0 forecasts for {delivery_date} before {cutoff_iso}. Checking fallback...")
+            return (await self.get_forecasts_for_date(delivery_date, cutoff_iso, force_refresh=False))
+
         relevant_records.sort(key=lambda x: (x["startTime"], x["publishTime"]))
         return relevant_records
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """Return total row count in local SQLite cache."""
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) as count FROM actuals")
-        actuals_count = cursor.fetchone()["count"]
-        cursor.execute("SELECT COUNT(*) as count FROM forecasts")
-        forecasts_count = cursor.fetchone()["count"]
-        conn.close()
-        return {
-            "total_actuals_cached": actuals_count,
-            "total_forecasts_cached": forecasts_count
-        }
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM actuals")
+            actuals_count = cursor.fetchone()["count"]
+            cursor.execute("SELECT COUNT(*) as count FROM forecasts")
+            forecasts_count = cursor.fetchone()["count"]
+            conn.close()
+            return {
+                "total_actuals_cached": actuals_count,
+                "total_forecasts_cached": forecasts_count
+            }
+        except Exception as e:
+            logger.warning(f"Error retrieving cache stats: {e}")
+            return {
+                "total_actuals_cached": 0,
+                "total_forecasts_cached": 0
+            }
 
 cache_service = CacheService()

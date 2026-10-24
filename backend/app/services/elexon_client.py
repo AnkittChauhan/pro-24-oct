@@ -6,6 +6,11 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+}
+
 class ElexonClient:
     """
     Resilient asynchronous client for the Elexon BMRS Insights Solution API.
@@ -36,7 +41,7 @@ class ElexonClient:
 
         logger.info(f"Fetching actuals from Elexon FUELHH: {params}")
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, headers=DEFAULT_HEADERS) as client:
             try:
                 response = await client.get(url, params=params)
                 response.raise_for_status()
@@ -80,7 +85,7 @@ class ElexonClient:
 
         logger.info(f"Fetching forecasts from Elexon WINDFOR: {params}")
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(timeout=self.timeout, headers=DEFAULT_HEADERS) as client:
             try:
                 response = await client.get(url, params=params)
                 response.raise_for_status()
