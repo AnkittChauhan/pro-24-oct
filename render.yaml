@@ -1,0 +1,28 @@
+services:
+  # FastAPI Backend Service
+  - type: web
+    name: uk-wind-forecast-backend
+    env: python
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt && python -m app.scripts.seed_cache --synthetic --all"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DB_PATH
+        value: /tmp/cache.db
+      - key: ELEXON_BASE_URL
+        value: https://data.elexon.co.uk/bmrs/api/v1/datasets
+
+  # React Frontend Static Site
+  - type: web
+    name: uk-wind-forecast-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: "npm install && npm run build"
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
