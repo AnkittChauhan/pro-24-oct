@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Header } from './components/Header';
 import { getHealth } from './services/api';
-import { Calendar, Sliders, ShieldCheck } from 'lucide-react';
+import { Calendar, Sliders, ShieldCheck, Database } from 'lucide-react';
 
 export function App() {
   const [isLive, setIsLive] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [cacheStats, setCacheStats] = useState<{ actuals: number; forecasts: number }>({ actuals: 0, forecasts: 0 });
   const [selectedDate, setSelectedDate] = useState('2026-01-15');
   const [cutoffTime, setCutoffTime] = useState('12:00');
 
@@ -17,6 +18,12 @@ export function App() {
     try {
       const health = await getHealth();
       setIsLive(health.status === 'healthy');
+      if (health.cache_stats) {
+        setCacheStats({
+          actuals: health.cache_stats.total_actuals_cached,
+          forecasts: health.cache_stats.total_forecasts_cached,
+        });
+      }
     } catch {
       setIsLive(false);
     }
@@ -30,10 +37,9 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col text-slate-100">
-      <Header onSync={handleSync} isSyncing={isSyncing} isLive={isLive} />
+      <Header onSync={handleSync} isSyncing={isSyncing} isLive={isLive} cachedCount={cacheStats} />
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
-        {/* Placeholder Controls & Status Card for Scaffolding Phase */}
         <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b border-slate-800">
             <div>
@@ -76,21 +82,40 @@ export function App() {
             </div>
           </div>
 
-          <div className="mt-6 flex items-center justify-between p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
-            <div className="flex items-center gap-3">
-              <ShieldCheck className="w-6 h-6 text-emerald-400" />
-              <div>
-                <p className="text-sm font-semibold text-emerald-300">
-                  Phase 1 Environment & Scaffolding Initialized
-                </p>
-                <p className="text-xs text-slate-400">
-                  Ready for Phase 2: Live Elexon streaming integration & Read-Through caching service.
-                </p>
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="flex items-center justify-between p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/20">
+              <div className="flex items-center gap-3">
+                <ShieldCheck className="w-6 h-6 text-emerald-400" />
+                <div>
+                  <p className="text-sm font-semibold text-emerald-300">
+                    Phase 2 Client & Cache Ingestion Ready
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    ElexonClient + SQLite Read-Through Cache active with WAL mode.
+                  </p>
+                </div>
               </div>
+              <span className="text-xs font-mono px-2.5 py-1 rounded bg-slate-800 text-emerald-300 border border-slate-700">
+                Phase 2 Complete
+              </span>
             </div>
-            <span className="text-xs font-mono px-2.5 py-1 rounded bg-slate-800 text-slate-300 border border-slate-700">
-              v1.0.0-rc1
-            </span>
+
+            <div className="flex items-center justify-between p-4 rounded-xl bg-blue-500/5 border border-blue-500/20">
+              <div className="flex items-center gap-3">
+                <Database className="w-6 h-6 text-blue-400" />
+                <div>
+                  <p className="text-sm font-semibold text-blue-300">
+                    Local Storage Status
+                  </p>
+                  <p className="text-xs text-slate-400 font-mono">
+                    {cacheStats.actuals} actuals | {cacheStats.forecasts} forecasts
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs font-mono px-2.5 py-1 rounded bg-slate-800 text-blue-300 border border-slate-700">
+                SQLite WAL
+              </span>
+            </div>
           </div>
         </div>
       </main>

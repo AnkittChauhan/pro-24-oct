@@ -18,3 +18,4 @@ async def test_api_v1_health():
         data = response.json()
         assert data["status"] == "healthy"
         assert data["version"] == "1.0.0"
+        assert "cache_stats" in data

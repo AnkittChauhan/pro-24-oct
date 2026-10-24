@@ -2,6 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.v1 import api_router
+from app.db.init_db import init_db
+
+# Initialize database schema on startup
+init_db()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -20,7 +24,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Root health check endpoint
 @app.get("/health", tags=["health"])
 async def root_health():
     return {"status": "ok", "service": settings.PROJECT_NAME}

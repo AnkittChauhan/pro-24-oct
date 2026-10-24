@@ -33,17 +33,25 @@ This platform enables power procurement traders to:
 │   ├── app/
 │   │   ├── api/
 │   │   │   └── v1/
-│   │   │       ├── health.py        # Health check & connectivity probe
+│   │   │       ├── health.py        # Health check & cache statistics
 │   │   │       └── __init__.py
 │   │   ├── core/
 │   │   │   ├── config.py            # Pydantic environment configuration
 │   │   │   └── __init__.py
-│   │   ├── db/                      # SQLite schema and session management
+│   │   ├── db/
+│   │   │   ├── init_db.py           # SQLite WAL connection & schema initialization
+│   │   │   └── __init__.py
 │   │   ├── models/                  # Pydantic schemas (DayAheadResponse, Metrics)
-│   │   ├── services/                # ElexonClient, Cache, Matcher, MetricsEngine
+│   │   ├── services/
+│   │   │   ├── elexon_client.py     # Async HTTP client for Elexon BMRS stream endpoints
+│   │   │   ├── cache_service.py     # Read-through cache with SQLite persistence
+│   │   │   └── __init__.py
+│   │   ├── scripts/
+│   │   │   └── seed_cache.py        # CLI tool to pre-warm cache for January 2026
 │   │   └── main.py                  # FastAPI application entrypoint & middleware
 │   ├── tests/
 │   │   ├── test_health.py           # API health tests
+│   │   ├── test_elexon_and_cache.py # Cache-aside & Elexon stream unit tests
 │   │   └── __init__.py
 │   ├── Dockerfile                   # Python container configuration
 │   └── requirements.txt             # Backend dependencies
@@ -109,6 +117,9 @@ pip install -r requirements.txt
 
 # Run backend test suite
 pytest
+
+# Optional: Seed first 3 days of January 2026 into cache
+python -m app.scripts.seed_cache --start 1 --end 3
 
 # Start FastAPI dev server
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

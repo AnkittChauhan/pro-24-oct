@@ -1,1 +1,1 @@
-"""Core configuration and settings."""
+"""Core configuration."""
