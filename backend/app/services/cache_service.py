@@ -76,7 +76,36 @@ class CacheService:
         next_date = (curr_date + timedelta(days=1)).strftime("%Y-%m-%d")
         publish_to = f"{next_date}T04:00:00Z"
 
-        fresh_actuals = await self.client.fetch_actual_wind(publish_from, publish_to)
+        try:
+            fresh_actuals = await self.client.fetch_actual_wind(publish_from, publish_to)
+        except Exception as api_err:
+            logger.warning(f"Live Elexon FUELHH fetch failed ({api_err}). Checking for fallback cache...")
+            cursor.execute(
+                """
+                SELECT start_time, publish_time, settlement_date, settlement_period, generation_mw, fetched_at
+                FROM actuals
+                WHERE settlement_date = ?
+                ORDER BY settlement_period ASC
+                """,
+                (delivery_date,)
+            )
+            fallback_rows = cursor.fetchall()
+            conn.close()
+            if fallback_rows:
+                logger.info(f"Returning {len(fallback_rows)} cached actuals as fallback after Elexon API error.")
+                return [
+                    {
+                        "startTime": row["start_time"],
+                        "publishTime": row["publish_time"],
+                        "settlementDate": row["settlement_date"],
+                        "settlementPeriod": row["settlement_period"],
+                        "generation": row["generation_mw"],
+                        "cached": True
+                    }
+                    for row in fallback_rows
+                ]
+            raise api_err
+
         now_str = self._get_utc_now_iso()
 
         # Filter strictly for the target settlement date and upsert into SQLite
@@ -164,7 +193,34 @@ class CacheService:
         query_start = (curr_date - timedelta(days=2)).strftime("%Y-%m-%d") + "T00:00:00Z"
         query_end = cutoff_iso
 
-        fresh_forecasts = await self.client.fetch_wind_forecasts(query_start, query_end)
+        try:
+            fresh_forecasts = await self.client.fetch_wind_forecasts(query_start, query_end)
+        except Exception as api_err:
+            logger.warning(f"Live Elexon WINDFOR fetch failed ({api_err}). Checking for fallback cache...")
+            cursor.execute(
+                """
+                SELECT publish_time, start_time, generation_mw, fetched_at
+                FROM forecasts
+                WHERE start_time >= ? AND start_time <= ? AND publish_time <= ?
+                ORDER BY start_time ASC, publish_time DESC
+                """,
+                (target_start, target_end, cutoff_iso)
+            )
+            fallback_rows = cursor.fetchall()
+            conn.close()
+            if fallback_rows:
+                logger.info(f"Returning {len(fallback_rows)} cached forecasts as fallback after Elexon API error.")
+                return [
+                    {
+                        "publishTime": row["publish_time"],
+                        "startTime": row["start_time"],
+                        "generation": row["generation_mw"],
+                        "cached": True
+                    }
+                    for row in fallback_rows
+                ]
+            raise api_err
+
         now_str = self._get_utc_now_iso()
 
         # Upsert into SQLite
